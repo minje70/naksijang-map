@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>낚시장 위치 선택</title>
+  <style>
+    html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: #e8eef3; }
+    #fallback {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      padding: 24px; box-sizing: border-box; z-index: 99999;
+      background: #f5f7fa; color: #1c1c1e;
+      font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      align-items: center; justify-content: center; flex-direction: column; text-align: center;
+      gap: 12px; overflow: auto;
+    }
+    #fallback.visible { display: flex; }
+    .pin-marker {
+      width: 24px; height: 24px; border-radius: 12px;
+      background: #FF3B30; border: 3px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="fallback">
+    <h3>지도를 불러오지 못했어요</h3>
+    <p>네이버 maps.js 인증 실패. 도메인 등록을 확인해 주세요.</p>
+  </div>
+  <script>
+    window.__naverLoaded = false;
+    const post = (data) => {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(data));
+    };
+    window.addEventListener('error', (e) => post({ type: 'jsError', message: String(e.message) }));
+
+    const authPoll = setInterval(() => {
+      if (typeof naver !== 'undefined' && naver.maps) {
+        clearInterval(authPoll);
+        naver.maps.onAuthFailure = function (err) {
+          document.getElementById('fallback').classList.add('visible');
+          post({ type: 'authFailure', errorMsg: String(err || '') });
+        };
+      }
+    }, 50);
+    setTimeout(() => clearInterval(authPoll), 6000);
+  </script>
+  <script type="text/javascript" src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=xqwgy8m33j" onerror="window.__naverLoadErr = 'script onerror'"></script>
+  <script>
+    let map = null;
+    let pinMarker = null;
+
+    const initMap = (lat, lng) => {
+      try {
+        if (typeof naver === 'undefined' || !naver.maps) {
+          document.getElementById('fallback').classList.add('visible');
+          post({ type: 'sdkFailed' });
+          return;
+        }
+        window.__naverLoaded = true;
+        const center = new naver.maps.LatLng(lat, lng);
+        map = new naver.maps.Map('map', { center, zoom: 14, zoomControl: true });
+        pinMarker = new naver.maps.Marker({
+          map,
+          position: center,
+          draggable: true,
+          icon: {
+            content: '<div class="pin-marker"></div>',
+            anchor: new naver.maps.Point(12, 12),
+          },
+        });
+        const updatePin = (latlng) => {
+          pinMarker.setPosition(latlng);
+          post({ type: 'pinMove', lat: latlng.lat(), lng: latlng.lng() });
+        };
+        naver.maps.Event.addListener(map, 'click', (e) => updatePin(e.coord));
+        naver.maps.Event.addListener(pinMarker, 'dragend', (e) => updatePin(e.coord));
+        post({ type: 'ready', lat, lng });
+      } catch (err) {
+        post({ type: 'jsError', message: 'initMap: ' + String(err && err.message || err) });
+      }
+    };
+
+    window.__pickerBoot = (lat, lng) => {
+      let tries = 0;
+      const tryStart = () => {
+        if (typeof naver !== 'undefined' && naver.maps) {
+          initMap(lat, lng);
+          return;
+        }
+        if (tries++ < 40) {
+          setTimeout(tryStart, 100);
+        } else {
+          document.getElementById('fallback').classList.add('visible');
+          post({ type: 'sdkFailed', reason: window.__naverLoadErr || 'timeout' });
+        }
+      };
+      tryStart();
+    };
+  </script>
+</body>
+</html>

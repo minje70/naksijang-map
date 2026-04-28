@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>낚시장 지도</title>
+  <style>
+    html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: #e8eef3; }
+    #fallback {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      padding: 24px; box-sizing: border-box; z-index: 99999;
+      background: #f5f7fa; color: #1c1c1e;
+      font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      align-items: center; justify-content: center; flex-direction: column; text-align: center;
+      gap: 12px; overflow: auto;
+    }
+    #fallback.visible { display: flex; }
+    #fallback h3 { margin: 0; font-size: 18px; }
+    #fallback p { margin: 0; font-size: 14px; color: #6E6E73; line-height: 1.5; }
+    .spot-marker {
+      width: 38px; height: 38px; border-radius: 19px;
+      background: #FF9500; border: 3px solid #fff;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+      color: #fff; font-weight: 800; font-size: 14px;
+      transition: transform 0.15s ease, background-color 0.2s ease;
+    }
+    .spot-marker.active {
+      background: #00B4D8;
+      transform: scale(1.25);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+    }
+    .record-marker {
+      width: 14px; height: 14px; border-radius: 7px;
+      background: #00B4D8; border: 2px solid #fff;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+    .add-marker {
+      width: 14px; height: 14px; border-radius: 7px;
+      background: #FF3B30; border: 2px solid #fff;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+      animation: pulse 1.4s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.7; }
+    }
+    .my-marker {
+      width: 16px; height: 16px; border-radius: 8px;
+      background: #34C759; border: 3px solid #fff;
+      box-shadow: 0 2px 6px rgba(52,199,89,0.5);
+    }
+    .add-callout {
+      background: #00B4D8; color: #fff;
+      padding: 10px 14px; border-radius: 10px;
+      font-weight: 700; font-size: 14px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      cursor: pointer; user-select: none;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="fallback">
+    <h3>지도를 불러오지 못했어요</h3>
+    <p>네이버 maps.js 인증 실패. 네이버 클라우드 콘솔에 GitHub Pages 도메인이 등록되었는지 확인해 주세요.</p>
+  </div>
+  <script>
+    window.__naverLoaded = false;
+    const post = (data) => {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(data));
+    };
+    const showFallback = (title, msg) => {
+      const fb = document.getElementById('fallback');
+      if (title) { fb.querySelector('h3').innerText = title; }
+      if (msg) { fb.querySelector('p').innerText = msg; }
+      fb.classList.add('visible');
+    };
+    window.addEventListener('error', (e) => post({ type: 'jsError', message: String(e.message) }));
+    window.addEventListener('unhandledrejection', (e) => post({ type: 'jsError', message: 'rejection: ' + String(e.reason) }));
+
+    // SDK 로드 즉시 onAuthFailure 콜백 등록 (initMap 전에 인증 검증이 일어나므로)
+    const authPoll = setInterval(() => {
+      if (typeof naver !== 'undefined' && naver.maps) {
+        clearInterval(authPoll);
+        naver.maps.onAuthFailure = function (err) {
+          showFallback('네이버 지도 인증 실패', '도메인이 콘솔에 등록되었는지 확인해 주세요.');
+          post({ type: 'authFailure', errorMsg: String(err || '') });
+        };
+      }
+    }, 50);
+    setTimeout(() => clearInterval(authPoll), 6000);
+  </script>
+  <script type="text/javascript" src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=xqwgy8m33j" onerror="window.__naverLoadErr = 'script onerror'"></script>
+  <script>
+    let map = null;
+    let spotMarkers = {};
+    let recordMarkers = {};
+    let addingMarker = null;
+    let addingOverlay = null;
+    let myMarker = null;
+
+    const initMap = (initialCenter) => {
+      try {
+        if (typeof naver === 'undefined' || !naver.maps) {
+          showFallback('지도 SDK 로드 실패', '네이버 maps.js를 불러오지 못했습니다.');
+          post({ type: 'sdkFailed', reason: 'naver.maps undefined' });
+          return;
+        }
+        window.__naverLoaded = true;
+        map = new naver.maps.Map('map', {
+          center: new naver.maps.LatLng(initialCenter.lat, initialCenter.lng),
+          zoom: 12,
+          zoomControl: true,
+          zoomControlOptions: { position: naver.maps.Position.TOP_RIGHT },
+        });
+        naver.maps.Event.addListener(map, 'click', (e) => {
+          const c = e.coord;
+          post({ type: 'mapPress', lat: c.lat(), lng: c.lng() });
+        });
+        post({ type: 'ready' });
+      } catch (err) {
+        showFallback('지도 초기화 오류', String(err && err.message || err));
+        post({ type: 'jsError', message: 'initMap: ' + String(err && err.message || err) });
+      }
+    };
+
+    const buildSpotIcon = (count, active) => ({
+      content: '<div class="spot-marker' + (active ? ' active' : '') + '">' + count + '</div>',
+      anchor: new naver.maps.Point(19, 19),
+    });
+    const buildRecordIcon = () => ({
+      content: '<div class="record-marker"></div>',
+      anchor: new naver.maps.Point(7, 7),
+    });
+    const buildAddIcon = () => ({
+      content: '<div class="add-marker"></div>',
+      anchor: new naver.maps.Point(7, 7),
+    });
+    const buildMyIcon = () => ({
+      content: '<div class="my-marker"></div>',
+      anchor: new naver.maps.Point(8, 8),
+    });
+
+    window.__naksiUpdate = (data) => {
+      if (!map) return;
+
+      // Spot 마커 갱신
+      const liveSpotIds = new Set(data.spots.map((s) => s.id));
+      Object.keys(spotMarkers).forEach((id) => {
+        if (!liveSpotIds.has(id)) {
+          spotMarkers[id].marker.setMap(null);
+          delete spotMarkers[id];
+        }
+      });
+      data.spots.forEach((s) => {
+        const existing = spotMarkers[s.id];
+        if (existing) {
+          if (existing.count !== s.count || existing.active !== s.active) {
+            existing.marker.setIcon(buildSpotIcon(s.count, s.active));
+            existing.count = s.count;
+            existing.active = s.active;
+          }
+          existing.marker.setPosition(new naver.maps.LatLng(s.lat, s.lng));
+        } else {
+          const m = new naver.maps.Marker({
+            map,
+            position: new naver.maps.LatLng(s.lat, s.lng),
+            icon: buildSpotIcon(s.count, s.active),
+            title: s.name,
+          });
+          naver.maps.Event.addListener(m, 'click', () => post({ type: 'spotPress', id: s.id }));
+          spotMarkers[s.id] = { marker: m, count: s.count, active: s.active, name: s.name };
+        }
+      });
+
+      // Record 마커 갱신 (spot 미연결인 것만)
+      const liveRecordIds = new Set(data.records.filter((r) => !r.hasSpot).map((r) => r.id));
+      Object.keys(recordMarkers).forEach((id) => {
+        if (!liveRecordIds.has(id)) {
+          recordMarkers[id].setMap(null);
+          delete recordMarkers[id];
+        }
+      });
+      data.records.filter((r) => !r.hasSpot).forEach((r) => {
+        if (recordMarkers[r.id]) return;
+        const m = new naver.maps.Marker({
+          map,
+          position: new naver.maps.LatLng(r.lat, r.lng),
+          icon: buildRecordIcon(),
+          title: r.species,
+        });
+        naver.maps.Event.addListener(m, 'click', () => post({ type: 'catchPress', id: r.id }));
+        recordMarkers[r.id] = m;
+      });
+
+      // Adding spot 마커 + callout overlay
+      if (data.addingSpot) {
+        const pos = new naver.maps.LatLng(data.addingSpot.lat, data.addingSpot.lng);
+        if (!addingMarker) {
+          addingMarker = new naver.maps.Marker({ map, position: pos, icon: buildAddIcon() });
+        } else {
+          addingMarker.setPosition(pos);
+        }
+        if (!addingOverlay) {
+          const div = document.createElement('div');
+          div.className = 'add-callout';
+          div.innerText = '+ 새 포인트 등록';
+          div.onclick = () => post({ type: 'addingPress' });
+          addingOverlay = new naver.maps.OverlayView();
+          addingOverlay._div = div;
+          addingOverlay.onAdd = function () {
+            this.getPanes().floatPane.appendChild(this._div);
+          };
+          addingOverlay.draw = function () {
+            const projection = this.getProjection();
+            const offset = projection.fromCoordToOffset(this._pos);
+            this._div.style.position = 'absolute';
+            this._div.style.left = (offset.x - this._div.offsetWidth / 2) + 'px';
+            this._div.style.top = (offset.y - this._div.offsetHeight - 18) + 'px';
+          };
+          addingOverlay.onRemove = function () {
+            if (this._div && this._div.parentNode) this._div.parentNode.removeChild(this._div);
+          };
+          addingOverlay.setMap(map);
+        }
+        addingOverlay._pos = pos;
+        addingOverlay.draw();
+      } else {
+        if (addingMarker) { addingMarker.setMap(null); addingMarker = null; }
+        if (addingOverlay) { addingOverlay.setMap(null); addingOverlay = null; }
+      }
+
+      // 내 위치 마커
+      if (data.myLocation) {
+        const pos = new naver.maps.LatLng(data.myLocation.lat, data.myLocation.lng);
+        if (!myMarker) {
+          myMarker = new naver.maps.Marker({ map, position: pos, icon: buildMyIcon(), zIndex: 50 });
+        } else {
+          myMarker.setPosition(pos);
+        }
+      }
+    };
+
+    window.__naksiPanTo = (lat, lng, zoom) => {
+      if (!map) return;
+      map.panTo(new naver.maps.LatLng(lat, lng));
+      if (typeof zoom === 'number') map.setZoom(zoom);
+    };
+
+    // RN이 호출 — SDK 로드 retry 후 initMap
+    window.__naksiBoot = (initialCenter) => {
+      let tries = 0;
+      const tryStart = () => {
+        if (typeof naver !== 'undefined' && naver.maps) {
+          initMap(initialCenter);
+          return;
+        }
+        if (tries++ < 40) {
+          setTimeout(tryStart, 100);
+        } else {
+          showFallback('지도 SDK 로드 실패', '네이버 maps.js가 4초 안에 로드되지 않음');
+          post({ type: 'sdkFailed', reason: window.__naverLoadErr || 'timeout' });
+        }
+      };
+      tryStart();
+    };
+  </script>
+</body>
+</html>
