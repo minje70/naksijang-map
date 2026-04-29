@@ -50,6 +50,7 @@
   <script>
     let map = null;
     let pinMarker = null;
+    let spotMarkers = {}; // id -> Marker
 
     const initMap = (lat, lng) => {
       try {
@@ -65,6 +66,7 @@
           map,
           position: center,
           draggable: true,
+          zIndex: 100,
           icon: {
             content: '<div class="pin-marker"></div>',
             anchor: new naver.maps.Point(12, 12),
@@ -89,6 +91,40 @@
       pinMarker.setPosition(latlng);
       map.panTo(latlng);
       post({ type: 'pinMove', lat, lng });
+    };
+
+    // RN이 spot 목록을 보내주면 마커로 렌더링
+    // spots: [{ id, name, lat, lng }]
+    window.__pickerSetSpots = (spots) => {
+      if (!map || typeof naver === 'undefined') return;
+      const liveIds = {};
+      (spots || []).forEach((s) => { liveIds[s.id] = true; });
+      Object.keys(spotMarkers).forEach((id) => {
+        if (!liveIds[id]) {
+          spotMarkers[id].setMap(null);
+          delete spotMarkers[id];
+        }
+      });
+      (spots || []).forEach((s) => {
+        if (spotMarkers[s.id]) {
+          spotMarkers[s.id].setPosition(new naver.maps.LatLng(s.lat, s.lng));
+          return;
+        }
+        const m = new naver.maps.Marker({
+          map,
+          position: new naver.maps.LatLng(s.lat, s.lng),
+          zIndex: 30,
+          icon: {
+            content: '<div style="width:24px;height:24px;border-radius:12px;background:#FF9500;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:pointer;"></div>',
+            anchor: new naver.maps.Point(12, 12),
+          },
+          title: s.name,
+        });
+        naver.maps.Event.addListener(m, 'click', () => {
+          post({ type: 'spotPress', id: s.id, name: s.name, lat: s.lat, lng: s.lng });
+        });
+        spotMarkers[s.id] = m;
+      });
     };
 
     window.__pickerBoot = (lat, lng) => {
