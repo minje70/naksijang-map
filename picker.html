@@ -46,7 +46,7 @@
     }, 50);
     setTimeout(() => clearInterval(authPoll), 6000);
   </script>
-  <script type="text/javascript" src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=xqwgy8m33j" onerror="window.__naverLoadErr = 'script onerror'"></script>
+  <script type="text/javascript" src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=xqwgy8m33j&submodules=geocoder" onerror="window.__naverLoadErr = 'script onerror'"></script>
   <script>
     let map = null;
     let pinMarker = null;
@@ -124,6 +124,31 @@
           post({ type: 'spotPress', id: s.id, name: s.name, lat: s.lat, lng: s.lng });
         });
         spotMarkers[s.id] = m;
+      });
+    };
+
+    // RN이 주소·지명 검색 요청 시 사용. reqId는 호출자가 응답 매칭용으로 보냄.
+    window.__pickerSearch = (query, reqId) => {
+      const svc = (typeof naver !== 'undefined') && naver.maps && naver.maps.Service;
+      if (!svc || !svc.geocode) {
+        post({ type: 'searchResults', reqId: reqId, error: 'geocoder not loaded', items: [] });
+        return;
+      }
+      svc.geocode({ query: query }, function (status, response) {
+        if (status !== svc.Status.OK) {
+          post({ type: 'searchResults', reqId: reqId, error: 'status: ' + status, items: [] });
+          return;
+        }
+        const items = ((response && response.v2 && response.v2.addresses) || []).map(function (a) {
+          return {
+            lat: parseFloat(a.y),
+            lng: parseFloat(a.x),
+            address: a.roadAddress || a.jibunAddress || a.englishAddress || query,
+            road: a.roadAddress || undefined,
+            jibun: a.jibunAddress || undefined,
+          };
+        });
+        post({ type: 'searchResults', reqId: reqId, items: items });
       });
     };
 
