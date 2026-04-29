@@ -82,6 +82,15 @@
       }
     };
 
+    // RN이 외부에서 핀을 옮길 때 사용 (현재 위치 FAB / 내 포인트 칩)
+    window.__pickerSetPin = (lat, lng) => {
+      if (!map || !pinMarker || typeof naver === 'undefined') return;
+      const latlng = new naver.maps.LatLng(lat, lng);
+      pinMarker.setPosition(latlng);
+      map.panTo(latlng);
+      post({ type: 'pinMove', lat, lng });
+    };
+
     window.__pickerBoot = (lat, lng) => {
       let tries = 0;
       const tryStart = () => {
